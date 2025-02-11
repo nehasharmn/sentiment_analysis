@@ -51,41 +51,36 @@ class NgramTokenizer(Tokenizer):
         self.n = n  # n-gram size
 
     def tokenize(self, text: str, return_token_ids: bool = False) -> List[List[str]] | List[int]:
-        words = convert_text_to_words(text) #splitting words into words and puncation using the utility function
-        tokens = [] # returning a list of list token strings
+        splits = convert_text_to_words(text)
+        ngrams = []
+        for i in range(len(splits) - self.n + 1):
+            temp_token = tuple(splits[i:i+self.n])
+            if temp_token in self.token_to_id:
+                ngrams.append(temp_token)
 
-        for i in range(len(words) - self.n + 1): #iterate over the list of words
-            ngram = tuple(words[i:i + self.n]) #tuple of each pair of word at a certain index of the list of words
+        if return_token_ids:
+            return [self.token_to_id[ngram] for ngram in ngrams]
         
-            if return_token_ids: #if true 
-                if ngram in self.token_to_id: # check if the pair exists in the dictionary 
-                    return tokens.append(self.token_to_id[ngram]) #add the token id number
-                else:
-                    tokens.append(ngram) #if not just add the word pair to the tokens
-        return tokens
+        return ngrams
 
 
     def train(self, corpus: List[str]):
-        token_counts = defaultdict(int)
-        """
-        TODO: Train the NgramTokenizer on a corpus. Iterate over the corpus, get ngrams, and count their frequencies.
-        Detailed instructions:
-        1. Initialize the token counts dictionary.
-        2. Iterate over the corpus:
-            a. Split the text into words and punctuation using convert_text_to_words utility function.
-            b. Get ngrams of size self.n, and count their frequencies.
-        3. Limit the vocabulary size to the most frequent self.vocab_size words if self.vocab_size is not -1.
-        (vocab_size is the maximum number of tokens in the vocabulary, and -1 means no limit)
-        
-        Example:
-        Input corpus: ["This movie was good", "This movie was bad"]
-        Input self.n: 1
-        Input self.vocab_size: -1
-        Output:
-        set self.token_to_id: {"This": 0, "movie": 1, "was": 2, "good": 3, "bad": 4}
-        set self.id_to_token: {0: "This", 1: "movie", 2: "was", 3: "good", 4: "bad"}
-        """
-        raise Exception("TODO: Implement this method")
+        token_freq = defaultdict(int)
+
+        for text in tqdm(corpus):
+            words = convert_text_to_words(text)
+            for i in range(len(words) - self.n + 1):
+                token = tuple(words[i:i+self.n])
+                token_freq[token] += 1
+
+        sorted_tokens = sorted(token_freq.items(), key=lambda x: x[1], reverse=True)
+
+        if self.vocab_size != -1:
+            sorted_tokens = sorted_tokens[:self.vocab_size]
+
+        for idx, (token, _) in enumerate(sorted_tokens):
+            self.token_to_id[token] = idx
+            self.id_to_token[idx] = token
 
     def __len__(self):
         return len(self.token_to_id)
