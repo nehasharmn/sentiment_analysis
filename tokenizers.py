@@ -7,6 +7,7 @@ import pickle
 import os
 import random
 
+#HIIIIIIIIIIIIIIIIIIIIIIIII
 # compiled regex for splitting text to words and punctuation
 identify_words_regex = re.compile(r"\w+|[^\w\s]", re.UNICODE)
 
