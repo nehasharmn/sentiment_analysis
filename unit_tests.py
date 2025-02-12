@@ -256,6 +256,15 @@ class MeanPoolingWordVectorFeatureExtractorTest(unittest.TestCase):
         with open("mean_pooling_feature_extractor_unittest_sol.pkl", "rb") as f:
             correct_features = pickle.load(f)
         
+        print("\n=== Extracted Features ===")
+        print(features)
+        print("\n=== Expected Features ===")
+        print(correct_features)
+
+        # Print the absolute difference
+        print("\n=== Difference ===")
+
+        
         # check each individual feature that it's close to the correct feature (some floating point error)
         for i in range(len(features)):
             self.assertTrue(np.isclose(features[i], correct_features[i]))
@@ -281,6 +290,16 @@ class MeanPoolingWordVectorFeatureExtractorTest(unittest.TestCase):
             
         correct_weights = weights_and_bias["weights"]
         correct_bias = weights_and_bias["bias"]
+
+        print("\nExtracted Weights")
+        print(weights)
+        print("\nExpected Weights")
+        print(correct_weights)
+        print("\nWeight Difference")
+        print(weights - correct_weights)
+
+        print("\nExtracted Bias", bias)
+        print("\nExpected Bias", correct_bias)
         
         self.assertTrue(np.allclose(weights, correct_weights))
         self.assertEqual(bias, correct_bias)

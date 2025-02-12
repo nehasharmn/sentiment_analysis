@@ -60,11 +60,9 @@ class CustomFeatureExtractor(FeatureExtractor):
         token_ids = self.tokenizer.tokenize(text, return_token_ids=True)
         feature_counts = Counter(token_ids)
 
-        # Add custom features
         total_tokens = len(token_ids)
         avg_token_length = sum(len(self.tokenizer.id_to_token[id]) for id in token_ids) / total_tokens if total_tokens > 0 else 0
 
-        # Add these custom features with new token IDs
         feature_counts[len(self.tokenizer)] = total_tokens
         feature_counts[len(self.tokenizer) + 1] = avg_token_length
 
@@ -74,39 +72,46 @@ class MeanPoolingWordVectorFeatureExtractor(FeatureExtractor):
     def __init__(self, tokenizer: Tokenizer):
         self.tokenizer = tokenizer
         print("Loading word2vec model...")
-        self.word_to_vector_model = api.load("glove-twitter-25")
+        self.word_to_vector_model = api.load("glove-twitter-25")  
         print("Word2vec model loaded")
 
     def __len__(self):
-        # the glove twitter word vectors are 25 dim
         return 25
 
     def get_word_vector(self, word) -> np.ndarray:
-        """
-        TODO: Get the word vector for a word from self.word_to_vector_model. If the word is not in the vocabulary, return None.
+        # Handle tuple case from n-gram tokenizer
+        if isinstance(word, tuple):
+            word = word[0]
         
-        Example:
-        Input `word`: "hello"
-        Output: numpy array of 25 dimensions
-        Input `word`: "328hdnsr32ion"
-        Output: None
-        """
-        raise Exception("TODO: Implement this method")
+        try:
+            if word in self.word_to_vector_model:
+                return self.word_to_vector_model[word]
+        except:
+            pass
+        
+        return np.zeros(25)
 
-    def extract_features(self, text: List[str]) -> Counter:
-        """
-        TODO: Extract mean pooling word vector features from a text represented as a list of words.
-        Detailed instructions:
-        1. Tokenize the text into words using self.tokenizer.tokenize.
-        2. For each word, get its word vector (using get_word_vector method).
-        3. Average all of the word vectors to get the mean pooling vector.
-        4. Convert the mean pooling vector to a Counter mapping from token ids to their counts.
-        Note: this last step is important because the framework requires features to be a Counter mapping
-        from token ids to their counts, normally you would not need to do this conversion.
-        Remember to ignore words that do not have a word vector.
-        """
-        raise Exception("TODO: Implement this method")
-
+    def extract_features(self, text: str) -> dict:
+        words = self.tokenizer.tokenize(text)
+        vectors = []
+        
+        for word in words:
+            if isinstance(word, tuple):
+                word = word[0]
+            try:
+                if word in self.word_to_vector_model:
+                    vector = self.word_to_vector_model[word]
+                    vectors.append(vector)
+            except:
+                continue
+        
+        if not vectors:
+            return {i: 0.0 for i in range(25)}
+            
+        vectors = np.array(vectors)
+        mean_vector = np.mean(vectors, axis=0)
+        
+        return {i: float(mean_vector[i]) for i in range(25)}
 
 class SentimentClassifier(object):
     """
@@ -140,52 +145,24 @@ def sigmoid(x: float) -> float:
     return 1 / (1 + np.exp(-x))
 
 class LogisticRegressionClassifier(SentimentClassifier):
-    """
-    Logistic regression classifier, uses a featurizer to transform text into feature vectors and learns a binary classifier.
-    """
-
     def __init__(self, featurizer: FeatureExtractor):
-        """
-        Initialize the logistic regression classifier.
-        Weights and bias are initialized to 0, and stored as attributes of the class.
-        The featurizer is also stored as an attribute of the class.
-        The dtype of the weights and bias is np.float64, don't change this.
-        """
         self.featurizer = featurizer
-        # weights are a fixed size numpy array, where size is the number of features in the featurizer
-        # init weights to 0, could do small random numbers but it's common practice to do 0
         self.weights = np.zeros(len(self.featurizer), dtype=np.float64)
         self.bias = 0
 
     def predict(self, text: str) -> int:
         features = self.featurizer.extract_features(text)
         
-        if isinstance(features, Counter):
-            score = self.bias + sum(self.weights[feature_id] * count for feature_id, count in features.items())
-        else:
-            score = self.bias + np.dot(self.weights, features)
-        
+        # If features is a Counter or dict, convert to vector form
+        if isinstance(features, (Counter, dict)):
+            feature_vector = np.zeros(len(self.featurizer))
+            for idx, value in features.items():
+                feature_vector[idx] = value
+            features = feature_vector
+            
+        score = self.bias + np.dot(self.weights, features)
         prob = sigmoid(score)
         return 1 if prob >= 0.5 else 0
-
-
-    def set_weights(self, weights: np.ndarray):
-        """
-        Set the weights of the model.
-        """
-        self.weights = weights
-
-    def set_bias(self, bias: float):
-        """
-        Set the bias of the model.
-        """
-        self.bias = bias
-
-    def get_weights(self):
-        return self.weights
-
-    def get_bias(self):
-        return self.bias
 
     def training_step(self, batch_exs: List[SentimentExample], learning_rate: float):
         gradient_w = np.zeros_like(self.weights)
@@ -193,15 +170,18 @@ class LogisticRegressionClassifier(SentimentClassifier):
 
         for ex in batch_exs:
             features = self.featurizer.extract_features(ex.words)
+            
+            # Convert features to vector if necessary
+            if isinstance(features, (Counter, dict)):
+                feature_vector = np.zeros(len(self.featurizer))
+                for idx, value in features.items():
+                    feature_vector[idx] = value
+                features = feature_vector
+                
             prediction = self.predict(ex.words)
-            error = (prediction - ex.label)
-
-            if isinstance(features, Counter):
-                for feature_id, count in features.items():
-                    gradient_w[feature_id] += error * count
-            else:
-                gradient_w += error * features
-
+            error = prediction - ex.label
+            
+            gradient_w += error * features
             gradient_b += error
 
         self.weights -= (learning_rate / len(batch_exs)) * gradient_w
@@ -251,20 +231,19 @@ def train_logistic_regression(
 
     pbar = tqdm(range(epochs))  
     for epoch in pbar:
-        shuffle_train_exs = np.random.permutation(train_exs) # shuffling the training examplers 
+        shuffle_train_exs = np.random.permutation(train_exs) 
 
     
-        for i in range(0, len(shuffle_train_exs), batch_size): # going through batch training examples
+        for i in range(0, len(shuffle_train_exs), batch_size): 
             batch_exs = shuffle_train_exs[i:i + batch_size] 
             current_learning_rate = schedule(epoch)
             model.training_step(batch_exs, current_learning_rate) #update
 
        
-        predictions = [model.predict(y.words) for y in dev_exs] #on dev ser
+        predictions = [model.predict(y.words) for y in dev_exs] 
         development_labels = [x.label for x in dev_exs]
         deveoplment_accuracy = get_accuracy(predictions, development_labels)
 
-        # Save the best model if the current one is better
         if deveoplment_accuracy > best_dev_accuracy: # copys the best model
             best_dev_accuracy = deveoplment_accuracy
             best_weights = model.weights.copy()
