@@ -7,7 +7,6 @@ import time
 from tokenizers import Tokenizer
 import numpy as np
 from tqdm import tqdm
-
 import gensim.downloader as api
 
 
@@ -27,6 +26,7 @@ class FeatureExtractor(object):
         raise Exception("Don't call me, call my subclasses")
 
 
+
 class CountFeatureExtractor(FeatureExtractor):
     """
     Extracts count features from text - your tokenizer returns token ids; you count their occurences.
@@ -39,39 +39,36 @@ class CountFeatureExtractor(FeatureExtractor):
         return len(self.tokenizer)
 
     def extract_features(self, text: str) -> Counter:
-        """
-        TODO: Extract count features from a text represented as a list of words.
-        The feature vector should be a Counter mapping from token ids to their counts in the text.
-
-        Example:
-        Input `text`: ["hi", "hi", "world"]
-        If `self.tokenizer.token_to_id`: {0: "hi", 1: "world", 2: "foo"}
-        Output: Counter({0: 2, 1: 1})
-        Depending on your implementation, you may also want to explicitly handle cases of unseen tokens:
-        Output: Counter({0: 2, 1: 1, 2: 0})
-        (In the above case, the token "foo" is not in the text, so its count is 0.)
-        """
-        raise Exception("TODO: Implement this method")
+        tokens = self.tokenizer.tokenize(text, return_token_ids=True)
+        return Counter(tokens)
 
 
 class CustomFeatureExtractor(FeatureExtractor):
     """
-    Custom feature extractor that extracts features from a text using a custom tokenizer.
+    Custom feature extractor combining n-grams and review metadata (e.g., review length).
+    - Combines unigram and bigram counts.
+    - Adds the total number of tokens and the average token length as features.
     """
-
     def __init__(self, tokenizer: Tokenizer):
         self.tokenizer = tokenizer
 
     def __len__(self):
-        return len(self.tokenizer)
+        # Feature count includes token IDs plus additional metadata features (e.g., length)
+        return len(self.tokenizer) + 2
 
     def extract_features(self, text: str) -> Counter:
-        """
-        TODO: Implement your own custom feature extractor. The returned format should be the same as in CountFeatureExtractor,
-        a Counter mapping from feature ids to their values.
-        """
-        raise Exception("TODO: Implement this method")
+        token_ids = self.tokenizer.tokenize(text, return_token_ids=True)
+        feature_counts = Counter(token_ids)
 
+        # Add custom features
+        total_tokens = len(token_ids)
+        avg_token_length = sum(len(self.tokenizer.id_to_token[id]) for id in token_ids) / total_tokens if total_tokens > 0 else 0
+
+        # Add these custom features with new token IDs
+        feature_counts[len(self.tokenizer)] = total_tokens
+        feature_counts[len(self.tokenizer) + 1] = avg_token_length
+
+        return feature_counts
 
 class MeanPoolingWordVectorFeatureExtractor(FeatureExtractor):
     def __init__(self, tokenizer: Tokenizer):
@@ -142,7 +139,6 @@ def sigmoid(x: float) -> float:
         return np.exp(x) / (1 + np.exp(x))
     return 1 / (1 + np.exp(-x))
 
-
 class LogisticRegressionClassifier(SentimentClassifier):
     """
     Logistic regression classifier, uses a featurizer to transform text into feature vectors and learns a binary classifier.
@@ -162,26 +158,16 @@ class LogisticRegressionClassifier(SentimentClassifier):
         self.bias = 0
 
     def predict(self, text: str) -> int:
-        """
-        TODO: Predict the sentiment of a text, should be either 0 or 1.
-        You will need to use the sigmoid function from above, which is already implemented.
-        Detailed instructions:
-        1. Extract features from the text using self.featurizer.extract_features.
-        2. Compute the score as the (sum of the product of the weights and the features) plus the bias.
-        3. Compute the sigmoid of the score.
-        4. Return 1 if the sigmoid score is greater than or equal to 0.5, otherwise return 0.
+        features = self.featurizer.extract_features(text)
         
-        Example:
-        Input `text`: "hi hi world"
-        If `self.weights`: [1, 2, 10]
-        If `self.bias`: 1
-        If `self.featurizer.extract_features(text)`: Counter({0: 2, 1: 1, 2:0})
-        Intermediate steps:
-        score = 1*2 + 2*1 + 10*0 + 1 = 5
-        sigmoid_score = sigmoid(5) = 0.993...
-        Output: 1
-        """
-        raise Exception("TODO: Implement this method")
+        if isinstance(features, Counter):
+            score = self.bias + sum(self.weights[feature_id] * count for feature_id, count in features.items())
+        else:
+            score = self.bias + np.dot(self.weights, features)
+        
+        prob = sigmoid(score)
+        return 1 if prob >= 0.5 else 0
+
 
     def set_weights(self, weights: np.ndarray):
         """
@@ -202,27 +188,26 @@ class LogisticRegressionClassifier(SentimentClassifier):
         return self.bias
 
     def training_step(self, batch_exs: List[SentimentExample], learning_rate: float):
-        """
-        TODO: Update the weights and bias of the model from a batch of examples, using the learning rate.
-        Detailed instructions:
-        1. Iterate over the batch of examples.
-            a. For each example, extract features and predict the label.
-            b. Calculate the loss for the example.
-        2. Update the weights and bias using the loss, using the learning rate and the batch size.
-        
-        Example:
-        Input `batch_exs`: [SentimentExample(words="hi hi world", label=1), SentimentExample(words="foo bar", label=0)]
-        Input `learning_rate`: 0.5
-        If `self.weights`: [-2, 1, 2]
-        If `self.bias`: -1
-        If `self.featurizer.extract_features(batch_exs[0].words)`: Counter({0: 2, 1: 1})
-        If `self.featurizer.extract_features(batch_exs[1].words)`: Counter({2: 1})
-        Output:
-        set `self.weights`: [-1.5, 1.25, 1.75]
-        set `self.bias`: -0.25
-        """
-        raise Exception("TODO: Implement this method")
+        gradient_w = np.zeros_like(self.weights)
+        gradient_b = 0.0
 
+        for ex in batch_exs:
+            features = self.featurizer.extract_features(ex.words)
+            prediction = self.predict(ex.words)
+            error = (prediction - ex.label)
+
+            if isinstance(features, Counter):
+                for feature_id, count in features.items():
+                    gradient_w[feature_id] += error * count
+            else:
+                gradient_w += error * features
+
+            gradient_b += error
+
+        self.weights -= (learning_rate / len(batch_exs)) * gradient_w
+        self.bias -= (learning_rate / len(batch_exs)) * gradient_b
+
+        
 
 def get_accuracy(predictions: List[int], labels: List[int]) -> float:
     """
@@ -256,86 +241,42 @@ def train_logistic_regression(
     batch_size: int = 10,
     epochs: int = 10,
 ) -> LogisticRegressionClassifier:
-    """
-    TODO: Train a logistic regression model.
-    :param train_exs: training set, List of SentimentExample objects
-    :param feat_extractor: feature extractor to use
-    :return: trained LogisticRegressionClassifier model
-    """
 
-    ##########################################
-    # Initialize the model and
-    # any other variables you want to keep track of
-    ##########################################
-    raise Exception("TODO: Implement this section")
+    model = LogisticRegressionClassifier(feat_extractor)
+    best_dev_accuracy = 0.0
+    best_weights = None
+    best_bias = None
 
-    ##########################################
-    # Learning rate scheduler
-    # We don't ask you to implement this, but modifying the 
-    # learning rate is a common technique to help with convergence.
-    ##########################################
-    # exponential decay learning rate scheduler
-    scheduler = lambda epoch: learning_rate * (0.95**epoch)
+    schedule = lambda epoch: learning_rate * (0.95**epoch)  # Decays learning rate over time
 
-    pbar = tqdm(range(epochs))
+    pbar = tqdm(range(epochs))  
     for epoch in pbar:
+        shuffle_train_exs = np.random.permutation(train_exs) # shuffling the training examplers 
 
-        ##########################################
-        # Shuffle the training examples
-        # Instead of modifying the train_exs list,
-        # just set shuffled_train_exs to a new list 
-        # with the same elements but in a random order
-        # This step helps prevent overfitting
-        ##########################################
-        shuffled_train_exs = []
-        raise Exception("TODO: Implement this section")
+    
+        for i in range(0, len(shuffle_train_exs), batch_size): # going through batch training examples
+            batch_exs = shuffle_train_exs[i:i + batch_size] 
+            current_learning_rate = schedule(epoch)
+            model.training_step(batch_exs, current_learning_rate) #update
 
-        ##########################################
-        # Iterate over batches of training examples
-        ##########################################
-        for i in range(0, len(shuffled_train_exs), batch_size):
-            batch_exs = shuffled_train_exs[i : i + batch_size]
+       
+        predictions = [model.predict(y.words) for y in dev_exs] #on dev ser
+        development_labels = [x.label for x in dev_exs]
+        deveoplment_accuracy = get_accuracy(predictions, development_labels)
 
-            ##########################################
-            # Get the current learning rate from your scheduler
-            ##########################################
-            cur_learning_rate = scheduler(epoch)
+        # Save the best model if the current one is better
+        if deveoplment_accuracy > best_dev_accuracy: # copys the best model
+            best_dev_accuracy = deveoplment_accuracy
+            best_weights = model.weights.copy()
+            best_bias = model.bias
 
-            ##########################################
-            # Update the weights and bias of the model using this batch of examples and the current learning rate
-            # (hint: this is running a training step with a batch of examples)
-            ##########################################
-            raise Exception("TODO: Implement this section")
+        metrics = {"best_dev_acc": best_dev_accuracy, "cur_dev_acc": deveoplment_accuracy} #logging current epoch performance using tqdm
+        pbar.set_postfix(metrics)
 
-        ##########################################
-        # Evaluate on the dev set
-        # save the best model so far by dev accuracy
-        # you may find the run_model_over_dataset 
-        # and get_accuracy functions helpful
-        ##########################################
-        raise Exception("TODO: Implement this section")
-
-        ##########################################
-        # Log any metrics you want here, tqdm will
-        # pass the metrics dictionary to the progress bar (pbar)
-        # your metrics should probably include the best dev accuracy, current dev accuracy
-        # and look something like this:
-        # metrics = {"best_dev_acc": 0.9, "cur_dev_acc": 0.5}
-        # this step is helpful for debugging and making sure you are saving the best model so far
-        # at the end of training, your 'best_dev_acc' should be the best accuracy on the dev set
-        ##########################################
-        metrics = {}
-        raise Exception("TODO: Implement this section")
-
-        # if metrics is not empty, update the progress bar
-        if len(metrics) > 0:
-            pbar.set_postfix(metrics)
-
-    ##########################################
-    # Set the weights and bias of the model to
-    # the best model so far by dev accuracy
-    ##########################################
-    raise Exception("TODO: Implement this section")
+    
+    #set weights and model
+    model.weights = best_weights
+    model.bias = best_bias
 
     return model
 

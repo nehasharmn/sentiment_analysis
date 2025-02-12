@@ -1,8 +1,10 @@
 # utils.py
+from typing import List
+
 import jsonlines
+
 from tokenizers import Tokenizer
 
-from typing import List
 
 class SentimentExample:
     """
