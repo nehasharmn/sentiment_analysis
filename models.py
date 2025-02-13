@@ -53,7 +53,6 @@ class CustomFeatureExtractor(FeatureExtractor):
         self.tokenizer = tokenizer
 
     def __len__(self):
-        # Feature count includes token IDs plus additional metadata features (e.g., length)
         return len(self.tokenizer) + 2
 
     def extract_features(self, text: str) -> Counter:
