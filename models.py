@@ -60,8 +60,7 @@ class CustomFeatureExtractor(FeatureExtractor):
         feature_counts = Counter(token_ids)
 
         total_tokens = len(token_ids)
-        avg_token_length = sum(len(self.tokenizer.id_to_token[id]) for id in token_ids) / total_tokens if total_tokens > 0 else 0
-
+        avg_token_length = sum(len(self.tokenizer.id_to_token[id]) for id in token_ids) / (total_tokens or 1)
         feature_counts[len(self.tokenizer)] = total_tokens
         feature_counts[len(self.tokenizer) + 1] = avg_token_length
 
@@ -75,10 +74,10 @@ class MeanPoolingWordVectorFeatureExtractor(FeatureExtractor):
         print("Word2vec model loaded")
 
     def __len__(self):
+    # the glove twitter word vectors are 25 dim
         return 25
 
     def get_word_vector(self, word) -> np.ndarray:
-        # Handle tuple case from n-gram tokenizer
         if isinstance(word, tuple):
             word = word[0]
         
@@ -91,26 +90,26 @@ class MeanPoolingWordVectorFeatureExtractor(FeatureExtractor):
         return np.zeros(25)
 
     def extract_features(self, text: str) -> dict:
-        words = self.tokenizer.tokenize(text)
-        vectors = []
+        words = self.tokenizer.tokenize(text) # used tokenizer to take the text and split them into subwords 
+        vectors = [] #emplty list to store vectors 
         
         for word in words:
-            if isinstance(word, tuple):
+            if isinstance(word, tuple): #if a word is a tuple this extracts the first element
                 word = word[0]
             try:
-                if word in self.word_to_vector_model:
-                    vector = self.word_to_vector_model[word]
-                    vectors.append(vector)
+                if word in self.word_to_vector_model: # checks if the words exists in the word vector model
+                    vector = self.word_to_vector_model[word] # grabs the vector representation of the word
+                    vectors.append(vector) # add vector to the list
             except:
-                continue
+                continue #if a word is not found then continue 
         
-        if not vectors:
+        if not vectors: # no words word vectors are found return a vector o size 25 filled with 0s
             return {i: 0.0 for i in range(25)}
             
         vectors = np.array(vectors)
         mean_vector = np.mean(vectors, axis=0)
         
-        return {i: float(mean_vector[i]) for i in range(25)}
+        return {i: float(mean_vector[i]) for i in range(25)} # return mean vactor as a dictionary
 
 class SentimentClassifier(object):
     """
@@ -144,12 +143,23 @@ def sigmoid(x: float) -> float:
     return 1 / (1 + np.exp(-x))
 
 class LogisticRegressionClassifier(SentimentClassifier):
+    """
+    Logistic regression classifier, uses a featurizer to transform text into feature vectors and learns a binary classifier.
+    """
     def __init__(self, featurizer: FeatureExtractor):
+        """
+        Initialize the logistic regression classifier.
+        Weights and bias are initialized to 0, and stored as attributes of the class.
+        The featurizer is also stored as an attribute of the class.
+        The dtype of the weights and bias is np.float64, don't change this.
+        """
+
         self.featurizer = featurizer
         self.weights = np.zeros(len(self.featurizer), dtype=np.float64)
         self.bias = 0
 
     def predict(self, text: str) -> int:
+
         features = self.featurizer.extract_features(text)
         
         # If features is a Counter or dict, convert to vector form
@@ -164,7 +174,7 @@ class LogisticRegressionClassifier(SentimentClassifier):
         return 1 if prob >= 0.5 else 0
 
     def training_step(self, batch_exs: List[SentimentExample], learning_rate: float):
-        gradient_w = np.zeros_like(self.weights)
+        gradient_w = np.zeros_like(self.weights)  #make sure gradients output right
         gradient_b = 0.0
 
         for ex in batch_exs:
@@ -180,6 +190,7 @@ class LogisticRegressionClassifier(SentimentClassifier):
             prediction = self.predict(ex.words)
             error = prediction - ex.label
             
+
             gradient_w += error * features
             gradient_b += error
 
@@ -230,6 +241,7 @@ def train_logistic_regression(
 
     pbar = tqdm(range(epochs))  
     for epoch in pbar:
+        #shuffle examples so we dont learn in the same order ever
         shuffle_train_exs = np.random.permutation(train_exs) 
 
     
@@ -252,7 +264,7 @@ def train_logistic_regression(
         pbar.set_postfix(metrics)
 
     
-    #set weights and model
+    # use the best weights from training
     model.weights = best_weights
     model.bias = best_bias
 
