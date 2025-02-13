@@ -51,7 +51,9 @@ class CountFeatureExtractor(FeatureExtractor):
         Output: Counter({0: 2, 1: 1, 2: 0})
         (In the above case, the token "foo" is not in the text, so its count is 0.)
         """
-        raise Exception("TODO: Implement this method")
+        counts = self.tokenizer.tokenize(text, True)
+        return Counter(counts)
+
 
 
 class CustomFeatureExtractor(FeatureExtractor):
@@ -70,7 +72,21 @@ class CustomFeatureExtractor(FeatureExtractor):
         TODO: Implement your own custom feature extractor. The returned format should be the same as in CountFeatureExtractor,
         a Counter mapping from feature ids to their values.
         """
-        raise Exception("TODO: Implement this method")
+        features = Counter()
+        
+        tokens = self.tokenizer.tokenize(text, True)
+        features.update(Counter(tokens))
+        
+        text_length = len(text.split())
+        features[-1] = text_length
+
+        if tokens:
+            features[-2] = tokens[0]
+            features[-3] = tokens[-1]
+            
+        features[-4] = sum(1 for c in text if not c.isalnum())
+        
+        return features
 
 
 class MeanPoolingWordVectorFeatureExtractor(FeatureExtractor):
@@ -94,7 +110,9 @@ class MeanPoolingWordVectorFeatureExtractor(FeatureExtractor):
         Input `word`: "328hdnsr32ion"
         Output: None
         """
-        raise Exception("TODO: Implement this method")
+        if word in self.word_to_vector_model:
+            return self.word_to_vector_model[word]
+        return None
 
     def extract_features(self, text: List[str]) -> Counter:
         """
@@ -108,7 +126,15 @@ class MeanPoolingWordVectorFeatureExtractor(FeatureExtractor):
         from token ids to their counts, normally you would not need to do this conversion.
         Remember to ignore words that do not have a word vector.
         """
-        raise Exception("TODO: Implement this method")
+        features = Counter()
+        tokens = self.tokenizer.tokenize(text, False)
+        word_vectors = [self.get_word_vector(token) for token in tokens]
+        word_vectors = [vec for vec in word_vectors if vec is not None]
+        if word_vectors:
+            mean_vector = np.mean(word_vectors, axis=0)
+            for i, val in enumerate(mean_vector):
+                features[i] = val
+        return features
 
 
 class SentimentClassifier(object):
@@ -181,7 +207,13 @@ class LogisticRegressionClassifier(SentimentClassifier):
         sigmoid_score = sigmoid(5) = 0.993...
         Output: 1
         """
-        raise Exception("TODO: Implement this method")
+        features = self.featurizer.extract_features(text)
+        score = np.dot([features.get(i,0) for i in range(len(self.weights))], self.weights) + self.bias
+        sigmoid_score = sigmoid(score)
+        if sigmoid_score>=0.5:
+            return 1
+        else:
+            return 0
 
     def set_weights(self, weights: np.ndarray):
         """
@@ -221,7 +253,22 @@ class LogisticRegressionClassifier(SentimentClassifier):
         set `self.weights`: [-1.5, 1.25, 1.75]
         set `self.bias`: -0.25
         """
-        raise Exception("TODO: Implement this method")
+        train_weights = np.zeros_like(self.weights)
+        train_bias = 0.0
+        batch_size = len(batch_exs)
+
+        for example in batch_exs:
+            features = self.featurizer.extract_features(example.words)
+            feature_vector = np.array([features.get(i,0) for i in range(len(self.weights))])
+            score = np.dot(feature_vector, self.weights) + self.bias
+            sigmoid_score = sigmoid(score)
+            pred = 1 if sigmoid_score>=0.5 else 0
+            error = pred - example.label
+            train_weights += error * feature_vector
+            train_bias += error
+
+        self.weights -= learning_rate * (train_weights / batch_size)
+        self.bias -= learning_rate * (train_bias / batch_size)
 
 
 def get_accuracy(predictions: List[int], labels: List[int]) -> float:
@@ -267,7 +314,11 @@ def train_logistic_regression(
     # Initialize the model and
     # any other variables you want to keep track of
     ##########################################
-    raise Exception("TODO: Implement this section")
+    model = LogisticRegressionClassifier(feat_extractor)
+    best_weights = None
+    best_bias = None
+    metrics = {}
+    metrics["best_dev_acc"] = 0.0
 
     ##########################################
     # Learning rate scheduler
@@ -288,7 +339,8 @@ def train_logistic_regression(
         # This step helps prevent overfitting
         ##########################################
         shuffled_train_exs = []
-        raise Exception("TODO: Implement this section")
+        shuffled_train_exs.extend(train_exs)
+        np.random.shuffle(shuffled_train_exs)
 
         ##########################################
         # Iterate over batches of training examples
@@ -305,7 +357,7 @@ def train_logistic_regression(
             # Update the weights and bias of the model using this batch of examples and the current learning rate
             # (hint: this is running a training step with a batch of examples)
             ##########################################
-            raise Exception("TODO: Implement this section")
+            model.training_step(batch_exs, cur_learning_rate)
 
         ##########################################
         # Evaluate on the dev set
@@ -313,7 +365,9 @@ def train_logistic_regression(
         # you may find the run_model_over_dataset 
         # and get_accuracy functions helpful
         ##########################################
-        raise Exception("TODO: Implement this section")
+        predictions = run_model_over_dataset(model, dev_exs)
+        labels = [ex.label for ex in dev_exs]
+        dev_accuracy = get_accuracy(predictions, labels)
 
         ##########################################
         # Log any metrics you want here, tqdm will
@@ -324,8 +378,13 @@ def train_logistic_regression(
         # this step is helpful for debugging and making sure you are saving the best model so far
         # at the end of training, your 'best_dev_acc' should be the best accuracy on the dev set
         ##########################################
-        metrics = {}
-        raise Exception("TODO: Implement this section")
+        
+        if dev_accuracy > metrics["best_dev_acc"]:
+            best_weights = model.get_weights()
+            best_bias = model.get_bias()
+
+        metrics["cur_dev_acc"] = dev_accuracy
+        metrics["best_dev_acc"] = max(metrics["best_dev_acc"], dev_accuracy)
 
         # if metrics is not empty, update the progress bar
         if len(metrics) > 0:
@@ -335,7 +394,8 @@ def train_logistic_regression(
     # Set the weights and bias of the model to
     # the best model so far by dev accuracy
     ##########################################
-    raise Exception("TODO: Implement this section")
+    model.set_bias(best_bias)
+    model.set_weights(best_weights)
 
     return model
 
