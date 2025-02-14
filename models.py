@@ -172,6 +172,24 @@ class LogisticRegressionClassifier(SentimentClassifier):
         score = self.bias + np.dot(self.weights, features)
         prob = sigmoid(score)
         return 1 if prob >= 0.5 else 0
+    
+    def set_weights(self, weights: np.ndarray):
+        """
+        Set the weights of the model.
+        """
+        self.weights = weights
+
+    def set_bias(self, bias: float):
+        """
+        Set the bias of the model.
+        """
+        self.bias = bias
+
+    def get_weights(self):
+        return self.weights
+
+    def get_bias(self):
+        return self.bias
 
     def training_step(self, batch_exs: List[SentimentExample], learning_rate: float):
         gradient_w = np.zeros_like(self.weights)  #make sure gradients output right
